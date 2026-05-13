@@ -89,7 +89,8 @@ RESPONSE RULES:
             messages=messages
         )
         return response.content[0].text.strip()
-    except Exception:
+    except Exception as e:
+        print(f"Claude API Error: {e}")
         return "Something went wrong. Can you say that again?"
 
 def analyze_with_claude(journal_text: str) -> dict:
