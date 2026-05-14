@@ -1,13 +1,14 @@
 from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./mindtrack.db")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(
     DATABASE_URL,
@@ -22,7 +23,7 @@ class User(Base):
     email         = Column(String, unique=True, index=True, nullable=False)
     username      = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    created_at    = Column(DateTime, default=datetime.utcnow)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     entries       = relationship("Entry", back_populates="user")
     memories      = relationship("MayaMemory", back_populates="user")
     insights      = relationship("MayaInsight", back_populates="user")
@@ -39,7 +40,7 @@ class Entry(Base):
     distress_score  = Column(Integer)
     themes          = Column(String)
     llm_reflection  = Column(Text)
-    created_at      = Column(DateTime, default=datetime.utcnow)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     user            = relationship("User", back_populates="entries")
 
 class MayaMemory(Base):
@@ -53,7 +54,7 @@ class MayaMemory(Base):
     distress_level   = Column(String)
     positive_triggers = Column(String)
     negative_triggers = Column(String)
-    created_at       = Column(DateTime, default=datetime.utcnow)
+    created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     user             = relationship("User", back_populates="memories")
 
 class MayaInsight(Base):
@@ -62,7 +63,7 @@ class MayaInsight(Base):
     user_id    = Column(Integer, ForeignKey("users.id"), nullable=False)
     insight    = Column(Text, nullable=False)
     category   = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     user       = relationship("User", back_populates="insights")
 
 class ConversationLog(Base):
@@ -72,7 +73,7 @@ class ConversationLog(Base):
     session_date = Column(String, nullable=False)
     role         = Column(String, nullable=False)
     content      = Column(Text, nullable=False)
-    created_at   = Column(DateTime, default=datetime.utcnow)
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     user         = relationship("User", back_populates="conversations")
 
 def get_db():
