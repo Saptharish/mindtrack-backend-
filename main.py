@@ -1,7 +1,10 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
@@ -13,7 +16,12 @@ from llm import (chat_with_claude, analyze_with_claude,
                  summarize_conversation, extract_quick_memory)
 from sentiment import analyze_sentiment
 
-app = FastAPI(title="MindTrack API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+app = FastAPI(title="MindTrack API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,10 +30,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-def startup():
-    init_db()
 
 # ── Pydantic schemas ───────────────────────────────────────────────
 class UserCreate(BaseModel):
@@ -113,7 +117,7 @@ def create_entry(entry_data: EntryCreate,
     )
     db.add(entry); db.commit(); db.refresh(entry)
     return {
-        "entry":      entry,
+        "entry":      jsonable_encoder(entry),
         "sentiment":  sentiment,
         "llm_result": llm_result
     }
@@ -125,14 +129,30 @@ def get_entries(current_user: User = Depends(get_current_user),
         Entry.user_id == current_user.id
     ).order_by(Entry.created_at.desc()).all()
 
+@app.delete("/journal/entries/{entry_id}")
+def delete_entry(entry_id: int,
+                 current_user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    entry = db.query(Entry).filter(
+        Entry.id == entry_id,
+        Entry.user_id == current_user.id
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    db.delete(entry)
+    db.commit()
+    return {"status": "deleted"}
+
 @app.get("/journal/analytics")
 def get_analytics(current_user: User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    entries = db.query(Entry).filter(Entry.user_id == current_user.id).all()
+    entries = db.query(Entry).filter(
+        Entry.user_id == current_user.id
+    ).order_by(Entry.created_at.asc()).all()
     if not entries:
         return {"total": 0, "avg_mood": 0, "avg_distress": 0, "best_mood": 0}
-    moods      = [e.sentiment_score for e in entries if e.sentiment_score]
-    distresses = [e.distress_score  for e in entries if e.distress_score]
+    moods      = [e.sentiment_score for e in entries if e.sentiment_score is not None]
+    distresses = [e.distress_score  for e in entries if e.distress_score is not None]
     return {
         "total":        len(entries),
         "avg_mood":     round(sum(moods) / len(moods), 1) if moods else 0,
@@ -161,9 +181,8 @@ def maya_chat(chat_data: ChatMessage,
         ConversationLog.user_id == current_user.id
     ).order_by(ConversationLog.created_at.asc()).all()
 
-    days_of_data = db.query(MayaMemory).filter(
-        MayaMemory.user_id == current_user.id
-    ).distinct(MayaMemory.date).count()
+    days_of_data = db.query(func.count(func.distinct(MayaMemory.date)))\
+                     .filter(MayaMemory.user_id == current_user.id).scalar()
 
     memories_list = [{"date": m.date, "summary": m.summary,
                       "dominant_emotion": m.dominant_emotion,
@@ -245,6 +264,47 @@ def save_session(session_data: SaveSessionRequest,
         db.commit()
     return {"status": "saved", "summary": summary_data}
 
+@app.get("/maya/sessions")
+def get_sessions(current_user: User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    logs = db.query(ConversationLog).filter(
+        ConversationLog.user_id == current_user.id
+    ).order_by(ConversationLog.created_at.asc()).all()
+
+    sessions: dict = {}
+    for log in logs:
+        d = log.session_date
+        if d not in sessions:
+            sessions[d] = {
+                "id":           d,
+                "created_at":   log.created_at.isoformat(),
+                "conversation": []
+            }
+        sessions[d]["conversation"].append({
+            "role":    log.role,
+            "content": log.content
+        })
+
+    # Return newest sessions first
+    return list(reversed(list(sessions.values())))
+
+@app.delete("/maya/sessions/{session_date}")
+def delete_session(session_date: str,
+                   current_user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    db.query(ConversationLog).filter(
+        ConversationLog.user_id == current_user.id,
+        ConversationLog.session_date == session_date
+    ).delete(synchronize_session=False)
+
+    db.query(MayaMemory).filter(
+        MayaMemory.user_id == current_user.id,
+        MayaMemory.date == session_date
+    ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"status": "deleted"}
+
 @app.get("/maya/memory")
 def get_memory(current_user: User = Depends(get_current_user),
                db: Session = Depends(get_db)):
@@ -256,9 +316,8 @@ def get_memory(current_user: User = Depends(get_current_user),
         MayaInsight.user_id == current_user.id
     ).order_by(MayaInsight.created_at.desc()).limit(15).all()
 
-    days = db.query(MayaMemory).filter(
-        MayaMemory.user_id == current_user.id
-    ).distinct(MayaMemory.date).count()
+    days = db.query(func.count(func.distinct(MayaMemory.date)))\
+              .filter(MayaMemory.user_id == current_user.id).scalar()
 
     return {
         "days_of_data": days,
