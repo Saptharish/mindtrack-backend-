@@ -4,5 +4,7 @@ venv/
 __pycache__/
 *.pyc
 *.db
+*.db.*
 *.sqlite3
 .claude/
+.pytest_cache/

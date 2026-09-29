@@ -23,6 +23,8 @@ class User(Base):
     email         = Column(String, unique=True, index=True, nullable=False)
     username      = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    security_question    = Column(String, nullable=False)
+    security_answer_hash = Column(String, nullable=False)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     entries       = relationship("Entry", back_populates="user")
     memories      = relationship("MayaMemory", back_populates="user")

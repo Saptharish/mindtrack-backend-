@@ -1,10 +1,17 @@
 import anthropic
 import json
 import os
+import re
 from dotenv import load_dotenv
 
 load_dotenv()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+def _extract_json(raw: str) -> str:
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return raw.strip()
 
 def build_memory_context(memories, insights, days_of_data, conversation_log=None) -> str:
     if not memories and not insights and not conversation_log:
@@ -78,7 +85,8 @@ RESPONSE RULES:
 
     messages = []
     for h in history[-12:]:
-        messages.append({"role": h["role"], "content": h["content"]})
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": message})
 
     try:
@@ -111,11 +119,7 @@ Return:
             messages=[{"role": "user", "content": prompt}]
         )
         raw = message.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
+        return json.loads(_extract_json(raw))
     except Exception:
         return {"themes": ["reflection"], "distress_score": 0,
                 "reflection": "Thank you for sharing. Your feelings matter."}
@@ -148,11 +152,7 @@ Return:
             messages=[{"role": "user", "content": prompt}]
         )
         raw = response.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
+        return json.loads(_extract_json(raw))
     except Exception:
         return {}
 
@@ -176,10 +176,6 @@ Return:
             messages=[{"role": "user", "content": prompt}]
         )
         raw = response.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
+        return json.loads(_extract_json(raw))
     except Exception:
         return {}
